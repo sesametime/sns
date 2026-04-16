@@ -1,0 +1,20 @@
+services:
+  test:
+    image: php:8.3-cli
+    working_dir: /app
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    volumes:
+      - .:/app
+      - composer-cache:/root/.composer
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        apt-get update -qq && apt-get install -y -qq git unzip > /dev/null 2>&1
+        curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer > /dev/null 2>&1
+        composer install --prefer-dist
+        vendor/bin/phpunit --exclude-group=functional
+
+volumes:
+  composer-cache:

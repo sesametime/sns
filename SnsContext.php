@@ -148,6 +148,14 @@ class SnsContext implements Context
     public function setSubscriptionAttributes(SnsSubscribe $subscribe): void
     {
         foreach ($this->getSubscriptions($subscribe->getTopic()) as $subscription) {
+            if ($subscription['Protocol'] !== $subscribe->getProtocol()) {
+                continue;
+            }
+
+            if ($subscription['Endpoint'] !== $subscribe->getEndpoint()) {
+                continue;
+            }
+
             $this->client->setSubscriptionAttributes(array_merge(
                 $subscribe->getAttributes(),
                 ['SubscriptionArn' => $subscription['SubscriptionArn']],

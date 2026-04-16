@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get next version
+        id: version
+        run: |
+          LATEST=$(git tag --sort=-v:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ -z "$LATEST" ]; then
+            echo "next=0.10.21" >> $GITHUB_OUTPUT
+          else
+            PATCH=$(echo "$LATEST" | awk -F. '{print $3}')
+            echo "next=0.10.$((PATCH + 1))" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git rev-parse "${{ steps.version.outputs.next }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git tag ${{ steps.version.outputs.next }}
+          git push origin ${{ steps.version.outputs.next }}

@@ -64,6 +64,77 @@ class SnsContextTest extends ContextSpec
         ));
     }
 
+    public function testGetSubscriptionsCachesResultPerTopicAndDoesNotRelist(): void
+    {
+        $client = $this->createMock(SnsClient::class);
+        $client->expects($this->once())
+            ->method('listSubscriptionsByTopic')
+            ->willReturn(new Result(['Subscriptions' => [
+                ['SubscriptionArn' => 'arn1', 'Protocol' => 'sqs', 'Endpoint' => 'endpoint1'],
+            ]]));
+
+        $context = new SnsContext($client, ['topic_arns' => ['topic1' => 'topicArn1']]);
+        $topic = new SnsDestination('topic1');
+
+        $first = $context->getSubscriptions($topic);
+        $second = $context->getSubscriptions($topic);
+
+        $this->assertSame($first, $second);
+    }
+
+    public function testSubscribeInvalidatesCacheSoNextGetSubscriptionsRelists(): void
+    {
+        $client = $this->createMock(SnsClient::class);
+        $client->expects($this->exactly(2))
+            ->method('listSubscriptionsByTopic')
+            ->willReturnOnConsecutiveCalls(
+                new Result(['Subscriptions' => []]),
+                new Result(['Subscriptions' => [
+                    ['SubscriptionArn' => 'arnNew', 'Protocol' => 'sqs', 'Endpoint' => 'endpoint1'],
+                ]]),
+            );
+        $client->expects($this->once())
+            ->method('subscribe')
+            ->willReturn(new Result([]));
+
+        $context = new SnsContext($client, ['topic_arns' => ['topic1' => 'topicArn1']]);
+        $topic = new SnsDestination('topic1');
+
+        $context->subscribe(new SnsSubscribe($topic, 'endpoint1', 'sqs'));
+        $subscriptions = $context->getSubscriptions($topic);
+
+        $this->assertCount(1, $subscriptions);
+        $this->assertSame('arnNew', $subscriptions[0]['SubscriptionArn']);
+    }
+
+    public function testDeclareTopicCreatesTopicOncePerTopic(): void
+    {
+        $client = $this->createMock(SnsClient::class);
+        $client->expects($this->once())
+            ->method('createTopic')
+            ->willReturn(new Result(['TopicArn' => 'topicArn1']));
+
+        $context = new SnsContext($client, ['topic_arns' => []]);
+        $topic = new SnsDestination('topic1');
+
+        $context->declareTopic($topic);
+        $context->declareTopic($topic);
+    }
+
+    public function testDeclareTopicIsNotSkippedWhenArnWasSetViaSetTopicArn(): void
+    {
+        $client = $this->createMock(SnsClient::class);
+        $client->expects($this->once())
+            ->method('createTopic')
+            ->willReturn(new Result(['TopicArn' => 'topicArn1']));
+
+        $context = new SnsContext($client, ['topic_arns' => []]);
+        $topic = new SnsDestination('topic1');
+
+        $context->setTopicArn($topic, 'topicArn1');
+        $context->declareTopic($topic);
+    }
+
     protected function createContext()
     {
         $client = $this->createMock(SnsClient::class);

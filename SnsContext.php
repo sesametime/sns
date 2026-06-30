@@ -31,6 +31,16 @@ class SnsContext implements Context
 
     private $topicArns;
 
+    /**
+     * @var array<string, array> Cached subscriptions per topic ARN, for the lifetime of this context.
+     */
+    private $subscriptionsCache = [];
+
+    /**
+     * @var string[] Topic names already declared (CreateTopic called) during this context's lifetime.
+     */
+    private $declaredTopics = [];
+
     public function __construct(SnsClient $client, array $config)
     {
         $this->client = $client;
@@ -64,6 +74,10 @@ class SnsContext implements Context
 
     public function declareTopic(SnsDestination $destination): void
     {
+        if (in_array($destination->getTopicName(), $this->declaredTopics, true)) {
+            return;
+        }
+
         $result = $this->client->createTopic([
             'Attributes' => $destination->getAttributes(),
             'Name' => $destination->getQueueName(),
@@ -74,6 +88,7 @@ class SnsContext implements Context
         }
 
         $this->topicArns[$destination->getTopicName()] = (string) $result->get('TopicArn');
+        $this->declaredTopics[] = $destination->getTopicName();
     }
 
     public function setTopicArn(SnsDestination $destination, string $arn): void
@@ -83,9 +98,15 @@ class SnsContext implements Context
 
     public function deleteTopic(SnsDestination $destination): void
     {
-        $this->client->deleteTopic($this->getTopicArn($destination));
+        $topicArn = $this->getTopicArn($destination);
 
-        unset($this->topicArns[$destination->getTopicName()]);
+        $this->client->deleteTopic($topicArn);
+
+        unset($this->topicArns[$destination->getTopicName()], $this->subscriptionsCache[$topicArn]);
+        $this->declaredTopics = array_values(array_filter(
+            $this->declaredTopics,
+            static fn (string $name): bool => $name !== $destination->getTopicName(),
+        ));
     }
 
     public function subscribe(SnsSubscribe $subscribe): void
@@ -104,6 +125,8 @@ class SnsContext implements Context
             'ReturnSubscriptionArn' => $subscribe->isReturnSubscriptionArn(),
             'TopicArn' => $this->getTopicArn($subscribe->getTopic()),
         ]);
+
+        $this->invalidateSubscriptionsCache($subscribe->getTopic());
     }
 
     public function unsubscibe(SnsUnsubscribe $unsubscribe): void
@@ -120,13 +143,21 @@ class SnsContext implements Context
             $this->client->unsubscribe([
                 'SubscriptionArn' => $subscription['SubscriptionArn'],
             ]);
+
+            $this->invalidateSubscriptionsCache($unsubscribe->getTopic());
         }
     }
 
     public function getSubscriptions(SnsDestination $destination): array
     {
+        $topicArn = $this->getTopicArn($destination);
+
+        if (array_key_exists($topicArn, $this->subscriptionsCache)) {
+            return $this->subscriptionsCache[$topicArn];
+        }
+
         $args = [
-            'TopicArn' => $this->getTopicArn($destination),
+            'TopicArn' => $topicArn,
         ];
 
         $subscriptions = [];
@@ -142,7 +173,12 @@ class SnsContext implements Context
             $args['NextToken'] = $result->get('NextToken');
         }
 
-        return $subscriptions;
+        return $this->subscriptionsCache[$topicArn] = $subscriptions;
+    }
+
+    private function invalidateSubscriptionsCache(SnsDestination $destination): void
+    {
+        unset($this->subscriptionsCache[$this->getTopicArn($destination)]);
     }
 
     public function setSubscriptionAttributes(SnsSubscribe $subscribe): void
